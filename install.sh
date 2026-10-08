@@ -11,6 +11,8 @@ REPO=${0:A:h}
 SUDOERS=/etc/sudoers.d/nosleep
 BIN_DIR=$HOME/.local/bin
 LINK=$BIN_DIR/nosleep
+PLUGIN_DIR=$HOME/SwiftBar
+SWIFTBAR=/Applications/SwiftBar.app
 
 step() { print -P -- "%B==> $*%b" }
 ok()   { print -P -- "    %F{green}ok%f $*" }
@@ -68,6 +70,33 @@ install_bin() {
   $LINK status | sed 's/^/    /'
 }
 
+install_plugin() {
+  step "SwiftBar-плагин"
+  [[ -d $SWIFTBAR ]] || { warn "SwiftBar не установлен: brew install swiftbar, потом ./install.sh ещё раз"; return 0 }
+
+  # Папка, которую SwiftBar уже использует (ключ из его defaults), иначе наша.
+  local dir
+  dir=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null) || dir=
+  if [[ -z $dir ]]; then
+    dir=$PLUGIN_DIR
+    if ! pgrep -xq SwiftBar; then
+      defaults write com.ameba.SwiftBar PluginDirectory -string $dir
+      ok "папка плагинов SwiftBar: $dir"
+    else
+      warn "SwiftBar запущен без папки плагинов: выбери $dir в его меню"
+    fi
+  fi
+  mkdir -p $dir
+  ln -sfn $REPO/swiftbar/nosleep.5s.sh $dir/nosleep.5s.sh
+  ok "$dir/nosleep.5s.sh -> $REPO/swiftbar/nosleep.5s.sh"
+
+  if pgrep -xq SwiftBar; then
+    open -g 'swiftbar://refreshallplugins'
+  else
+    open -g -a SwiftBar
+  fi
+}
+
 uninstall() {
   step "снять флаг"
   if [[ -x $LINK || -x $REPO/bin/nosleep ]]; then
@@ -75,6 +104,10 @@ uninstall() {
   fi
   step "удалить"
   rm -f $LINK && ok "$LINK"
+  local dir
+  dir=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null) || dir=$PLUGIN_DIR
+  rm -f $dir/nosleep.5s.sh && ok "$dir/nosleep.5s.sh"
+  pgrep -xq SwiftBar && open -g 'swiftbar://refreshallplugins'
   print "    нужен пароль администратора"
   asudo /usr/bin/pmset -a disablesleep 0
   asudo rm -f $SUDOERS && ok "$SUDOERS"
@@ -82,7 +115,7 @@ uninstall() {
 }
 
 case "$1" in
-  "")        install_sudoers; install_bin; step "готово" ;;
+  "")        install_sudoers; install_bin; install_plugin; step "готово" ;;
   uninstall) uninstall; step "готово" ;;
   *)         print -u2 "usage: ./install.sh [uninstall]"; exit 2 ;;
 esac

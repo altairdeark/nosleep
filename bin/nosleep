@@ -5,7 +5,8 @@
 #   nosleep <команда ...>   флаг включён, пока идёт команда. Сессий может быть
 #                           несколько, флаг снимается после выхода последней
 #   nosleep on              ручной режим, держится до nosleep off
-#   nosleep off             снять ручной режим (живые сессии не трогает)
+#   nosleep for 1h|90m|30   не спать заданное время (без единиц - минуты)
+#   nosleep off             снять ручной режим и таймеры (сессии не трогает)
 #   nosleep off --force     снять всё: ручной режим, сессии, флаг
 #   nosleep status          для человека
 #   nosleep state           key=value для SwiftBar-плагина
@@ -43,6 +44,20 @@ live_sessions() {
   done
 }
 
+# Таймер - это фоновая сессия `sleep`, её файл начинается с этой метки.
+TIMER_LABEL="таймер до"
+
+# Отменить таймеры: убить их sleep, тогда их nosleep выходит сам.
+cancel_timers() {
+  local f
+  live_sessions
+  for f in $reply; do
+    [[ $(<$f) == "$TIMER_LABEL "* ]] || continue
+    pkill -TERM -P ${f:t} 2>/dev/null
+    rm -f $f
+  done
+}
+
 # Флаг 0, только если никто больше его не держит.
 release() {
   live_sessions
@@ -66,7 +81,7 @@ unlock() {
 # EXIT, заданный внутри функции, в zsh срабатывает при выходе из функции.
 start_session() {
   lock
-  print -r -- "$*" > $ME
+  print -r -- "${NOSLEEP_LABEL:-$*}" > $ME
   set_flag 1 || { trap - EXIT; rm -f $ME; exit 1 }
   unlock
 }
@@ -102,9 +117,26 @@ case "$1" in
     : > $MANUAL
     set_flag 1 && print -- "nosleep: ON (ручной режим, не забудь nosleep off)"
     ;;
+  for)
+    secs=
+    case $2 in
+      <->h) secs=$(( ${2%h} * 3600 )) ;;
+      <->m) secs=$(( ${2%m} * 60 )) ;;
+      <->)  secs=$(( $2 * 60 )) ;;
+      *)    die "длительность: 1h, 90m или 30 (минуты)" ;;
+    esac
+    (( secs > 0 )) || die "длительность должна быть больше нуля"
+    until=$(date -v+${secs}S +%H:%M)
+    NOSLEEP_LABEL="$TIMER_LABEL $until" nohup $0 sleep $secs </dev/null >/dev/null 2>&1 &!
+    # Дождаться, пока таймер поставит флаг: иначе ошибка sudo потеряется.
+    for _ in {1..20}; do flag_on && break; sleep 0.1; done
+    flag_on || die "таймер не включился (sudo без пароля настроен? см. README)"
+    print -- "nosleep: ON до $until"
+    ;;
   off)
     lock
     rm -f $MANUAL
+    cancel_timers
     if [[ $2 == --force ]]; then
       rm -f $SESSIONS/*(N)
       set_flag 0 && print -- "nosleep: OFF"
@@ -119,7 +151,7 @@ case "$1" in
     fi
     ;;
   ""|-h|--help)
-    print -u2 -- "usage: nosleep <команда ...> | nosleep on | off [--force] | status | state"
+    print -u2 -- "usage: nosleep <команда ...> | nosleep on | for 1h | off [--force] | status | state"
     exit 2
     ;;
   *)
