@@ -1,0 +1,3 @@
+# /etc/sudoers.d/nosleep: pmset disablesleep без пароля, только значения 0 и 1.
+# USER заменяется при установке (см. README).
+USER ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset -a disablesleep 1
