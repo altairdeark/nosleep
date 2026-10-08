@@ -1,0 +1,139 @@
+#!/bin/zsh -f
+# Работа при закрытой крышке: pmset disablesleep - единственный рычаг,
+# который переживает clamshell sleep (caffeinate и power assertions - нет).
+#
+#   nosleep <команда ...>   флаг включён, пока идёт команда. Сессий может быть
+#                           несколько, флаг снимается после выхода последней
+#   nosleep on              ручной режим, держится до nosleep off
+#   nosleep off             снять ручной режим (живые сессии не трогает)
+#   nosleep off --force     снять всё: ручной режим, сессии, флаг
+#   nosleep status          для человека
+#   nosleep state           key=value для SwiftBar-плагина
+#
+# pmset вызывается через `sudo -n`: без правила в /etc/sudoers.d (см. README)
+# пароль никогда не спрашивается, а команда падает с понятной ошибкой.
+
+emulate zsh
+setopt extended_glob
+zmodload zsh/system
+
+# SwiftBar и launchd запускают с урезанным PATH.
+path+=(/usr/bin /bin /usr/sbin /sbin)
+
+NOSLEEP_DIR=${NOSLEEP_DIR:-$HOME/.nosleep}
+SESSIONS=$NOSLEEP_DIR/sessions
+MANUAL=$NOSLEEP_DIR/manual
+LOCK=$NOSLEEP_DIR/lock
+
+die() { print -u2 -- "nosleep: $*"; exit 1 }
+
+set_flag() {
+  sudo -n pmset -a disablesleep $1 >/dev/null 2>&1 \
+    || { print -u2 -- "nosleep: sudo без пароля для pmset не настроен (см. README)"; return 1 }
+}
+
+flag_on() { pmset -g | grep -q 'SleepDisabled[[:space:]]*1' }
+
+# Живые сессии; файлы мёртвых (kill -9, краш) удаляются по дороге.
+live_sessions() {
+  local f
+  reply=()
+  for f in $SESSIONS/<->(N); do
+    if kill -0 ${f:t} 2>/dev/null; then reply+=$f; else rm -f $f; fi
+  done
+}
+
+# Флаг 0, только если никто больше его не держит.
+release() {
+  live_sessions
+  [[ -e $MANUAL ]] || (( $#reply )) || set_flag 0
+}
+
+# Все изменения состояния - под одной блокировкой, иначе выход одной сессии
+# может снять флаг, только что поставленный другой.
+typeset -i LOCK_FD=-1
+lock() {
+  (( LOCK_FD >= 0 )) && return
+  mkdir -p $SESSIONS && : >> $LOCK && zsystem flock -t 10 -f LOCK_FD $LOCK || die "не взять блокировку $LOCK"
+}
+unlock() {
+  (( LOCK_FD >= 0 )) || return 0
+  zsystem flock -u $LOCK_FD
+  LOCK_FD=-1
+}
+
+# Регистрирует сессию и ставит флаг. Traps ставятся на верхнем уровне:
+# EXIT, заданный внутри функции, в zsh срабатывает при выходе из функции.
+start_session() {
+  lock
+  print -r -- "$*" > $ME
+  set_flag 1 || { trap - EXIT; rm -f $ME; exit 1 }
+  unlock
+}
+
+cmd_state() {
+  local f
+  live_sessions
+  print -- "flag=$(flag_on && print 1 || print 0)"
+  print -- "manual=$([[ -e $MANUAL ]] && print 1 || print 0)"
+  print -- "sessions=$#reply"
+  print -- "power=$(pmset -g batt | grep -q "'AC Power'" && print ac || print battery)"
+  for f in $reply; do print -r -- "session=${f:t} $(<$f)"; done
+}
+
+cmd_status() {
+  live_sessions
+  if flag_on; then
+    print -- "nosleep: ON - сон отключён, крышку можно закрывать"
+  else
+    print -- "nosleep: OFF - обычный сон"
+  fi
+  [[ -e $MANUAL ]] && print -- "  ручной режим (nosleep off, чтобы снять)"
+  local f
+  for f in $reply; do print -r -- "  сессия ${f:t}: $(<$f)"; done
+  return 0
+}
+
+case "$1" in
+  status) cmd_status ;;
+  state)  cmd_state ;;
+  on)
+    lock
+    : > $MANUAL
+    set_flag 1 && print -- "nosleep: ON (ручной режим, не забудь nosleep off)"
+    ;;
+  off)
+    lock
+    rm -f $MANUAL
+    if [[ $2 == --force ]]; then
+      rm -f $SESSIONS/*(N)
+      set_flag 0 && print -- "nosleep: OFF"
+    else
+      release || exit 1
+      live_sessions
+      if (( $#reply )); then
+        print -- "nosleep: ручной режим снят, флаг держат сессии: $#reply"
+      else
+        print -- "nosleep: OFF"
+      fi
+    fi
+    ;;
+  ""|-h|--help)
+    print -u2 -- "usage: nosleep <команда ...> | nosleep on | off [--force] | status | state"
+    exit 2
+    ;;
+  *)
+    ME=$SESSIONS/$$
+    # Снятие - только в EXIT. INT/HUP/TERM лишь превращаем в выход: пока
+    # дочерний процесс жив, zsh ждёт его, поэтому Ctrl-C, который claude
+    # перехватывает, сессию не роняет. Traps до start_session, чтобы сигнал
+    # между установкой флага и trap не оставил флаг висеть.
+    trap 'lock; rm -f $ME; release' EXIT
+    trap 'exit 130' INT
+    trap 'exit 129' HUP
+    trap 'exit 143' TERM
+    start_session "$@"
+    "$@"
+    exit $?
+    ;;
+esac
