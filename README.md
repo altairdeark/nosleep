@@ -1,37 +1,72 @@
 # nosleep
 
-Мак не засыпает при закрытой крышке, пока идёт команда (например, сессия claude).
-Основа - `pmset -a disablesleep 1`.
+[Русский](README.ru.md)
+
+Keep a Mac awake with the lid closed while a command runs (a claude session, a long
+build). Plus a menu bar icon: see at a glance whether the Mac can sleep, and toggle
+it in one click.
+
+Under the hood: `pmset -a disablesleep 1`. `caffeinate` does not help here: with the
+lid closed the Mac sleeps anyway.
+
+<p>
+  <img src="docs/menu-off.png" width="360" alt="Menu: Mac sleeps as usual">
+  <img src="docs/menu-on.png" width="360" alt="Menu: Mac stays awake, a timer is running">
+</p>
+
+The menu bar UI is in Russian.
+
+## Commands
 
 ```
-nosleep claude          # флаг держится, пока идёт claude
-nosleep for 1h          # не спать час (90m, 30 - минуты)
-nosleep on | off        # ручной режим
-nosleep off --force     # снять всё
+nosleep claude          # stay awake while claude runs
+nosleep for 1h          # stay awake for an hour (90m; bare 30 = minutes)
+nosleep on | off        # manual mode
+nosleep off --force     # clear everything
 nosleep status
 ```
 
-## Установка
+Several `nosleep <command>` at once are fine: the Mac may sleep again once the last
+one exits.
+
+## Install
+
+Requires macOS 13+ and Xcode Command Line Tools (`xcode-select --install`, for `swiftc`).
 
 ```
-./install.sh             # спросит пароль администратора один раз
-./install.sh uninstall   # убрать всё и вернуть обычный сон
+git clone https://github.com/altairdeark/nosleep.git
+cd nosleep
+./install.sh             # asks for the admin password once
+./install.sh uninstall   # remove everything and restore normal sleep
 ```
 
-Что ставит:
-- `/etc/sudoers.d/nosleep` - без пароля разрешены только `pmset -a disablesleep 0|1`
-  (шаблон: `install/sudoers-nosleep`). Скрипт проверяет, что остальной sudo
-  по-прежнему просит пароль.
-- `~/.local/bin/nosleep` - симлинк на `bin/nosleep`.
-- SwiftBar-плагин `swiftbar/nosleep.5s.sh` (симлинк в папку плагинов SwiftBar,
-  по умолчанию `~/SwiftBar`). Сам SwiftBar: `brew install swiftbar`.
+What it installs:
+- `/etc/sudoers.d/nosleep` - passwordless sudo for `pmset -a disablesleep 0|1` only
+  (template: `install/sudoers-nosleep`). The script checks that any other sudo still
+  asks for a password.
+- `~/.local/bin/nosleep` - symlink to `bin/nosleep`. `~/.local/bin` must be on `PATH`.
+- `~/Applications/NosleepBar.app` menu bar icon (built from `menubar/NosleepBar.swift`
+  with `swiftc`) and its login item `~/Library/LaunchAgents/local.nosleep.bar.plist`.
 
-## Панель меню
+Keep the cloned folder in place after install: the command is a symlink into it.
 
-- пустая чашка - обычный сон
-- полная чашка - сон отключён
-- оранжевая полная чашка - сон отключён, но сессий нет (краш, перезагрузка) или мак
-  на батарее
+## Menu bar icon
 
-В меню: что сейчас не даёт спать, "Не давать спать 1 час / 2 часа / пока не выключу",
-"Разрешить маку спать".
+- empty cup - normal sleep
+- full cup - sleep disabled
+- orange full cup - sleep disabled but nothing holds it (crash, reboot), or running
+  on battery (works, but drains and heats up)
+
+The menu shows what keeps the Mac awake and offers "stay awake 1 hour / 2 hours /
+until I turn it off" and "let the Mac sleep".
+
+## Caveats
+
+- A closed Mac in a bag gets hot. On battery the icon turns orange.
+- If the process is killed with `kill -9` or the Mac crashes, the flag stays on (and
+  survives a reboot). The icon turns orange; clear it with `nosleep off --force` or
+  from the menu.
+
+## License
+
+MIT
