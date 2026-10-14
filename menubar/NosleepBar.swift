@@ -4,11 +4,19 @@
 
 import AppKit
 
+// Язык меню: русский при регионе RU или русском языке системы, иначе английский.
+let isRu = Locale.current.region?.identifier == "RU"
+    || (Locale.preferredLanguages.first?.hasPrefix("ru") ?? false)
+func L(_ ru: String, _ en: String) -> String { isRu ? ru : en }
+
+// Метку таймера пишет bin/nosleep (TIMER_LABEL), всегда по-русски.
+let timerLabel = "таймер до "
+
 struct State {
     var flag = false
     var manual = false
     var battery = false
-    var timers: [String] = []    // "таймер до 15:40"
+    var timers: [String] = []    // время конца таймера, "15:40"
     var sessions: [String] = []  // команды обычных сессий
     var error: String?
 
@@ -59,7 +67,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var s = State()
         let (out, ok) = run(["state"])
         if !ok {
-            s.error = "не найден или упал: \(bin)"
+            s.error = L("не найден или упал: ", "not found or failed: ") + bin
         }
         for line in out.split(separator: "\n") {
             guard let eq = line.firstIndex(of: "=") else { continue }
@@ -70,7 +78,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case "power": s.battery = val == "battery"
             case "session":
                 let cmd = val.split(separator: " ", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
-                if cmd.hasPrefix("таймер до ") { s.timers.append(cmd) } else { s.sessions.append(cmd) }
+                if cmd.hasPrefix(timerLabel) { s.timers.append(String(cmd.dropFirst(timerLabel.count))) } else { s.sessions.append(cmd) }
             default: break
             }
         }
@@ -111,15 +119,16 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
-        menu.addItem(info(s.flag ? "Мак не спит, крышку можно закрывать" : "Мак засыпает как обычно",
+        menu.addItem(info(s.flag ? L("Мак не спит, крышку можно закрывать", "Mac stays awake, you can close the lid")
+                                  : L("Мак засыпает как обычно", "Mac sleeps as usual"),
                           symbol: s.flag ? "cup.and.saucer.fill" : "cup.and.saucer"))
-        if s.orphan { menu.addItem(info("Ничего не запущено: забыли выключить?", symbol: "exclamationmark.triangle", warn: true)) }
-        if s.flag && s.battery { menu.addItem(info("Работает от батареи: разрядится и нагреется в сумке", symbol: "battery.25", warn: true)) }
+        if s.orphan { menu.addItem(info(L("Ничего не запущено: забыли выключить?", "Nothing is running: forgot to turn it off?"), symbol: "exclamationmark.triangle", warn: true)) }
+        if s.flag && s.battery { menu.addItem(info(L("Работает от батареи: разрядится и нагреется в сумке", "On battery: will drain and heat up in a bag"), symbol: "battery.25", warn: true)) }
 
-        let holders = s.timers + s.sessions
+        let holders = s.timers.map { L(timerLabel, "timer until ") + $0 } + s.sessions
         if !holders.isEmpty {
             menu.addItem(.separator())
-            menu.addItem(info("Не дают спать:", symbol: nil))
+            menu.addItem(info(L("Не дают спать:", "Keeping awake:"), symbol: nil))
             for h in holders {
                 menu.addItem(info(h.count > 50 ? String(h.prefix(49)) + "…" : h, symbol: nil, mono: true))
             }
@@ -128,20 +137,20 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         // Кнопки по состоянию: каждая говорит, что станет с маком.
         if !s.flag {
-            menu.addItem(action("Не давать спать 1 час", ["for", "1h"], symbol: "clock"))
-            menu.addItem(action("Не давать спать 2 часа", ["for", "2h"], symbol: "clock"))
-            menu.addItem(action("Не давать спать, пока не выключу", ["on"], symbol: "infinity"))
+            menu.addItem(action(L("Не давать спать 1 час", "Stay awake for 1 hour"), ["for", "1h"], symbol: "clock"))
+            menu.addItem(action(L("Не давать спать 2 часа", "Stay awake for 2 hours"), ["for", "2h"], symbol: "clock"))
+            menu.addItem(action(L("Не давать спать, пока не выключу", "Stay awake until I turn it off"), ["on"], symbol: "infinity"))
         } else if s.orphan {
-            menu.addItem(action("Разрешить маку спать", ["off", "--force"]))
+            menu.addItem(action(L("Разрешить маку спать", "Let the Mac sleep"), ["off", "--force"]))
         } else if s.holding && s.sessions.isEmpty {
-            menu.addItem(action("Разрешить маку спать", ["off"]))
+            menu.addItem(action(L("Разрешить маку спать", "Let the Mac sleep"), ["off"]))
         } else {
             if s.holding {
-                menu.addItem(action("Разрешить спать, когда закончатся сессии", ["off"]))
+                menu.addItem(action(L("Разрешить спать, когда закончатся сессии", "Let it sleep when sessions end"), ["off"]))
             } else {
-                menu.addItem(action("Не давать спать и после сессий", ["on"]))
+                menu.addItem(action(L("Не давать спать и после сессий", "Stay awake after sessions too"), ["on"]))
             }
-            menu.addItem(action("Разрешить спать сейчас (не ждать сессий)", ["off", "--force"]))
+            menu.addItem(action(L("Разрешить спать сейчас (не ждать сессий)", "Let it sleep now (don't wait for sessions)"), ["off", "--force"]))
         }
 
         menu.addItem(.separator())
@@ -170,7 +179,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func quitItem() -> NSMenuItem {
-        NSMenuItem(title: "Закрыть значок", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        NSMenuItem(title: L("Закрыть значок", "Quit nosleep icon"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     }
 
     @objc func runAction(_ sender: NSMenuItem) {
@@ -187,8 +196,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func flashError() {
         let alert = NSAlert()
-        alert.messageText = "nosleep: команда не выполнилась"
-        alert.informativeText = "Проверь в терминале: nosleep status. Возможно, не настроен sudo (./install.sh)."
+        alert.messageText = L("nosleep: команда не выполнилась", "nosleep: command failed")
+        alert.informativeText = L("Проверь в терминале: nosleep status. Возможно, не настроен sudo (./install.sh).",
+                                  "Check in Terminal: nosleep status. sudo may not be set up (./install.sh).")
         alert.runModal()
     }
 }

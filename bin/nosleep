@@ -45,6 +45,7 @@ live_sessions() {
 }
 
 # Таймер - это фоновая сессия `sleep`, её файл начинается с этой метки.
+# NosleepBar ищет эту метку в `nosleep state` (menubar/NosleepBar.swift).
 TIMER_LABEL="таймер до"
 
 # Отменить таймеры: убить их sleep, тогда их nosleep выходит сам.
