@@ -20,14 +20,15 @@ ok()   { print -P -- "    %F{green}ok%f $*" }
 warn() { print -P -- "    %F{yellow}!%f $*" }
 fail() { print -P -- "    %F{red}x%f $*" >&2; exit 1 }
 
-# sudo с паролем. Без терминала (например, `!` в Claude Code) пароль
-# спрашивается системным окном.
-asudo() {
-  if [[ -t 0 ]]; then
-    sudo "$@"
-  else
-    SUDO_ASKPASS=$REPO/install/askpass sudo -A "$@"
-  fi
+# Команда от root через стандартное системное окно пароля macOS (как при
+# установке программ). prompt - что и зачем, показывается в окне.
+admin() {
+  local prompt=$1; shift
+  /usr/bin/osascript \
+    -e 'on run argv' \
+    -e 'do shell script (item 1 of argv) with prompt (item 2 of argv) with administrator privileges' \
+    -e 'end run' \
+    "${(j: :)${(qq)@}}" "$prompt" >/dev/null || fail "пароль не введён, ничего не изменено"
 }
 
 # Правило работает: реальный вызов без пароля, но с текущим значением,
@@ -51,8 +52,9 @@ install_sudoers() {
     local tmp=$(mktemp -t nosleep.sudoers)
     sed "s/^USER /$(id -un) /" $REPO/install/sudoers-nosleep > $tmp
     visudo -cf $tmp >/dev/null || { rm -f $tmp; fail "правило не прошло visudo -c" }
-    print "    нужен пароль администратора"
-    asudo install -m 0440 -o root -g wheel $tmp $SUDOERS
+    print "    macOS попросит пароль: один раз, чтобы nosleep мог включать и выключать сон"
+    admin "nosleep: разрешить включать и выключать сон без пароля. Пароль нужен один раз, больше ничего не меняется." \
+      install -m 0440 -o root -g wheel $tmp $SUDOERS
     rm -f $tmp
     sudo -k
     pmset_ok || fail "pmset disablesleep всё ещё просит пароль"
@@ -142,9 +144,10 @@ uninstall() {
   stop_agent
   rm -f $AGENT && ok "$AGENT"
   rm -rf $APP && ok "$APP"
-  print "    нужен пароль администратора"
-  asudo /usr/bin/pmset -a disablesleep 0
-  asudo rm -f $SUDOERS && ok "$SUDOERS"
+  print "    macOS попросит пароль, чтобы вернуть обычный сон и убрать правило"
+  admin "nosleep: вернуть обычный сон и убрать разрешение, поставленное при установке." \
+    /bin/sh -c "/usr/bin/pmset -a disablesleep 0 && rm -f $SUDOERS"
+  ok "$SUDOERS"
   rm -rf $HOME/.nosleep && ok "~/.nosleep"
 }
 

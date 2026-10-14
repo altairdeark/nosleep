@@ -1,3 +1,0 @@
-#!/bin/zsh -f
-# SUDO_ASKPASS для запуска без терминала: системное окно ввода пароля.
-exec /usr/bin/osascript -e 'text returned of (display dialog "nosleep: пароль администратора" default answer "" with hidden answer with title "nosleep" with icon caution)'
