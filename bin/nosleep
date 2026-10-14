@@ -10,6 +10,7 @@
 #   nosleep off --force     снять всё: ручной режим, сессии, флаг
 #   nosleep status          для человека
 #   nosleep state           key=value для значка в панели меню
+#   nosleep lang            ru или en: язык сообщений (для install.sh)
 #
 # pmset вызывается через `sudo -n`: без правила в /etc/sudoers.d (см. README)
 # пароль никогда не спрашивается, а команда падает с понятной ошибкой.
@@ -26,11 +27,26 @@ SESSIONS=$NOSLEEP_DIR/sessions
 MANUAL=$NOSLEEP_DIR/manual
 LOCK=$NOSLEEP_DIR/lock
 
+# Язык сообщений, как у значка: ru при регионе RU или русском языке системы,
+# иначе en. NOSLEEP_LANG=ru|en перекрывает. AppleLocale вида en_US@rg=ruzzzz:
+# регион из @rg= главнее.
+ui_lang() {
+  [[ -n $NOSLEEP_LANG ]] && { print -r -- $NOSLEEP_LANG; return }
+  local loc lang region
+  loc=$(defaults read -g AppleLocale 2>/dev/null)
+  lang=$(defaults read -g AppleLanguages 2>/dev/null | sed -n '2s/[^a-zA-Z-]//gp')
+  if [[ $loc == *@rg=* ]]; then region=${${loc#*@rg=}[1,2]}; else region=${${loc%%@*}#*_}; fi
+  [[ ${region:l} == ru || $lang == ru* ]] && print ru || print en
+}
+t() { [[ $NOSLEEP_LANG == ru ]] && print -r -- $1 || print -r -- $2 }
+# state читает значок каждые 5 с, ему язык не нужен.
+[[ $1 == state ]] || NOSLEEP_LANG=$(ui_lang)
+
 die() { print -u2 -- "nosleep: $*"; exit 1 }
 
 set_flag() {
   sudo -n pmset -a disablesleep $1 >/dev/null 2>&1 \
-    || { print -u2 -- "nosleep: sudo без пароля для pmset не настроен (см. README)"; return 1 }
+    || { print -u2 -- "nosleep: $(t "sudo без пароля для pmset не настроен (см. README)" "passwordless sudo for pmset is not set up (see README)")"; return 1 }
 }
 
 flag_on() { pmset -g | grep -q 'SleepDisabled[[:space:]]*1' }
@@ -70,7 +86,7 @@ release() {
 typeset -i LOCK_FD=-1
 lock() {
   (( LOCK_FD >= 0 )) && return
-  mkdir -p $SESSIONS && : >> $LOCK && zsystem flock -t 10 -f LOCK_FD $LOCK || die "не взять блокировку $LOCK"
+  mkdir -p $SESSIONS && : >> $LOCK && zsystem flock -t 10 -f LOCK_FD $LOCK || die "$(t "не взять блокировку" "cannot take lock") $LOCK"
 }
 unlock() {
   (( LOCK_FD >= 0 )) || return 0
@@ -100,23 +116,28 @@ cmd_state() {
 cmd_status() {
   live_sessions
   if flag_on; then
-    print -- "nosleep: ON - сон отключён, крышку можно закрывать"
+    print -- "nosleep: ON - $(t "сон отключён, крышку можно закрывать" "sleep disabled, you can close the lid")"
   else
-    print -- "nosleep: OFF - обычный сон"
+    print -- "nosleep: OFF - $(t "обычный сон" "normal sleep")"
   fi
-  [[ -e $MANUAL ]] && print -- "  ручной режим (nosleep off, чтобы снять)"
-  local f
-  for f in $reply; do print -r -- "  сессия ${f:t}: $(<$f)"; done
+  [[ -e $MANUAL ]] && print -- "  $(t "ручной режим (nosleep off, чтобы снять)" "manual mode (nosleep off to clear)")"
+  local f what
+  for f in $reply; do
+    what=$(<$f)
+    [[ $what == "$TIMER_LABEL "* ]] && what="$(t $TIMER_LABEL "timer until") ${what#$TIMER_LABEL }"
+    print -r -- "  $(t сессия session) ${f:t}: $what"
+  done
   return 0
 }
 
 case "$1" in
   status) cmd_status ;;
   state)  cmd_state ;;
+  lang)   print -r -- $NOSLEEP_LANG ;;
   on)
     lock
     : > $MANUAL
-    set_flag 1 && print -- "nosleep: ON (ручной режим, не забудь nosleep off)"
+    set_flag 1 && print -- "nosleep: ON ($(t "ручной режим, не забудь nosleep off" "manual mode, remember nosleep off"))"
     ;;
   for)
     secs=
@@ -124,15 +145,15 @@ case "$1" in
       <->h) secs=$(( ${2%h} * 3600 )) ;;
       <->m) secs=$(( ${2%m} * 60 )) ;;
       <->)  secs=$(( $2 * 60 )) ;;
-      *)    die "длительность: 1h, 90m или 30 (минуты)" ;;
+      *)    die "$(t "длительность: 1h, 90m или 30 (минуты)" "duration: 1h, 90m or 30 (minutes)")" ;;
     esac
-    (( secs > 0 )) || die "длительность должна быть больше нуля"
+    (( secs > 0 )) || die "$(t "длительность должна быть больше нуля" "duration must be greater than zero")"
     until=$(date -v+${secs}S +%H:%M)
     NOSLEEP_LABEL="$TIMER_LABEL $until" nohup $0 sleep $secs </dev/null >/dev/null 2>&1 &!
     # Дождаться, пока таймер поставит флаг: иначе ошибка sudo потеряется.
     for _ in {1..20}; do flag_on && break; sleep 0.1; done
-    flag_on || die "таймер не включился (sudo без пароля настроен? см. README)"
-    print -- "nosleep: ON до $until"
+    flag_on || die "$(t "таймер не включился (sudo без пароля настроен? см. README)" "timer did not start (is passwordless sudo set up? see README)")"
+    print -- "nosleep: ON $(t до until) $until"
     ;;
   off)
     lock
@@ -145,14 +166,14 @@ case "$1" in
       release || exit 1
       live_sessions
       if (( $#reply )); then
-        print -- "nosleep: ручной режим снят, флаг держат сессии: $#reply"
+        print -- "nosleep: $(t "ручной режим снят, флаг держат сессии" "manual mode cleared, sessions still holding the flag"): $#reply"
       else
         print -- "nosleep: OFF"
       fi
     fi
     ;;
   ""|-h|--help)
-    print -u2 -- "usage: nosleep <команда ...> | nosleep on | for 1h | off [--force] | status | state"
+    print -u2 -- "usage: nosleep <$(t команда command) ...> | nosleep on | for 1h | off [--force] | status | state"
     exit 2
     ;;
   *)

@@ -14,7 +14,7 @@ lid closed the Mac sleeps anyway.
   <img src="docs/menu-on.png" width="360" alt="Menu: Mac stays awake, a timer is running">
 </p>
 
-Menu language: Russian if the region is Russia or the system language is Russian,
+Language (menu, command, installer): Russian if the region is Russia or the system language is Russian,
 English otherwise.
 
 ## Commands
