@@ -1,6 +1,6 @@
 #!/bin/zsh -f
 # Установка nosleep. Повторный запуск безопасен.
-#   ./install.sh             поставить
+#   ./install.sh             поставить (команда и значок NosleepBar.app)
 #   ./install.sh uninstall   убрать всё и вернуть обычный сон
 
 emulate zsh
@@ -11,8 +11,9 @@ REPO=${0:A:h}
 SUDOERS=/etc/sudoers.d/nosleep
 BIN_DIR=$HOME/.local/bin
 LINK=$BIN_DIR/nosleep
-PLUGIN_DIR=$HOME/SwiftBar
-SWIFTBAR=/Applications/SwiftBar.app
+APP=$HOME/Applications/NosleepBar.app
+AGENT_LABEL=local.nosleep.bar
+AGENT=$HOME/Library/LaunchAgents/$AGENT_LABEL.plist
 
 step() { print -P -- "%B==> $*%b" }
 ok()   { print -P -- "    %F{green}ok%f $*" }
@@ -70,31 +71,65 @@ install_bin() {
   $LINK status | sed 's/^/    /'
 }
 
-install_plugin() {
-  step "SwiftBar-плагин"
-  [[ -d $SWIFTBAR ]] || { warn "SwiftBar не установлен: brew install swiftbar, потом ./install.sh ещё раз"; return 0 }
+# bootout возвращается раньше, чем сервис выгружен: bootstrap сразу после
+# него падает с ошибкой 5. Ждём до 5 с.
+stop_agent() {
+  launchctl bootout gui/$UID/$AGENT_LABEL 2>/dev/null || return 0
+  local i
+  for i in {1..50}; do
+    launchctl print gui/$UID/$AGENT_LABEL >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+}
 
-  # Папка, которую SwiftBar уже использует (ключ из его defaults), иначе наша.
-  local dir
-  dir=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null) || dir=
-  if [[ -z $dir ]]; then
-    dir=$PLUGIN_DIR
-    if ! pgrep -xq SwiftBar; then
-      defaults write com.ameba.SwiftBar PluginDirectory -string $dir
-      ok "папка плагинов SwiftBar: $dir"
-    else
-      warn "SwiftBar запущен без папки плагинов: выбери $dir в его меню"
-    fi
-  fi
-  mkdir -p $dir
-  ln -sfn $REPO/swiftbar/nosleep.5s.sh $dir/nosleep.5s.sh
-  ok "$dir/nosleep.5s.sh -> $REPO/swiftbar/nosleep.5s.sh"
+install_app() {
+  step "значок в панели меню (NosleepBar.app)"
+  whence -p swiftc >/dev/null || fail "нет swiftc: xcode-select --install"
 
-  if pgrep -xq SwiftBar; then
-    open -g 'swiftbar://refreshallplugins'
-  else
-    open -g -a SwiftBar
-  fi
+  local tmp=$(mktemp -d -t nosleepbar)
+  swiftc -O -swift-version 5 -o $tmp/NosleepBar $REPO/menubar/NosleepBar.swift \
+    || { rm -rf $tmp; fail "сборка не прошла" }
+  rm -rf $APP
+  mkdir -p $APP/Contents/MacOS
+  mv $tmp/NosleepBar $APP/Contents/MacOS/
+  rm -rf $tmp
+  cat > $APP/Contents/Info.plist <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>$AGENT_LABEL</string>
+  <key>CFBundleName</key><string>NosleepBar</string>
+  <key>CFBundleExecutable</key><string>NosleepBar</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>LSUIElement</key><true/>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+</dict>
+</plist>
+PLIST
+  codesign --force --sign - $APP 2>/dev/null || warn "codesign не прошёл, запустится и так"
+  ok "$APP"
+
+  # Автозапуск при входе. KeepAlive только после сбоя: "Закрыть значок" не перезапускает.
+  mkdir -p ${AGENT:h}
+  cat > $AGENT <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$AGENT_LABEL</string>
+  <key>ProgramArguments</key><array><string>$APP/Contents/MacOS/NosleepBar</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ProcessType</key><string>Interactive</string>
+</dict>
+</plist>
+PLIST
+  plutil -lint -s $AGENT || fail "LaunchAgent не прошёл plutil -lint"
+  stop_agent
+  launchctl bootstrap gui/$UID $AGENT || fail "launchctl bootstrap не прошёл"
+  ok "автозапуск: $AGENT"
 }
 
 uninstall() {
@@ -104,10 +139,9 @@ uninstall() {
   fi
   step "удалить"
   rm -f $LINK && ok "$LINK"
-  local dir
-  dir=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null) || dir=$PLUGIN_DIR
-  rm -f $dir/nosleep.5s.sh && ok "$dir/nosleep.5s.sh"
-  pgrep -xq SwiftBar && open -g 'swiftbar://refreshallplugins'
+  stop_agent
+  rm -f $AGENT && ok "$AGENT"
+  rm -rf $APP && ok "$APP"
   print "    нужен пароль администратора"
   asudo /usr/bin/pmset -a disablesleep 0
   asudo rm -f $SUDOERS && ok "$SUDOERS"
@@ -115,7 +149,7 @@ uninstall() {
 }
 
 case "$1" in
-  "")        install_sudoers; install_bin; install_plugin; step "готово" ;;
+  "")        install_sudoers; install_bin; install_app; step "готово" ;;
   uninstall) uninstall; step "готово" ;;
   *)         print -u2 "usage: ./install.sh [uninstall]"; exit 2 ;;
 esac

@@ -9,7 +9,7 @@
 #   nosleep off             снять ручной режим и таймеры (сессии не трогает)
 #   nosleep off --force     снять всё: ручной режим, сессии, флаг
 #   nosleep status          для человека
-#   nosleep state           key=value для SwiftBar-плагина
+#   nosleep state           key=value для значка в панели меню
 #
 # pmset вызывается через `sudo -n`: без правила в /etc/sudoers.d (см. README)
 # пароль никогда не спрашивается, а команда падает с понятной ошибкой.
@@ -18,7 +18,7 @@ emulate zsh
 setopt extended_glob
 zmodload zsh/system
 
-# SwiftBar и launchd запускают с урезанным PATH.
+# launchd и GUI-приложения запускают с урезанным PATH.
 path+=(/usr/bin /bin /usr/sbin /sbin)
 
 NOSLEEP_DIR=${NOSLEEP_DIR:-$HOME/.nosleep}
